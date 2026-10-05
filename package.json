@@ -13,7 +13,7 @@
     "@nuxt/icon": "^2.1.0",
     "@pinia/nuxt": "^1.0.2",
     "@vueuse/core": "^14.4.0",
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "^12.11.1",
     "cheerio": "^1.2.0",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
@@ -33,7 +33,7 @@
   },
   "allowScripts": {
     "@parcel/watcher@2.6.0": true,
-    "better-sqlite3@13.0.3": true,
+    "better-sqlite3@12.11.1": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true
   }
