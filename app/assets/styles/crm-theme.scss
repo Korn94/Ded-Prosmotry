@@ -1,0 +1,39 @@
+// app/assets/styles/crm-theme.scss
+// Специфичные стили для таблиц, карточек и CRM-элементов
+
+.crm-table {
+  width: 100%;
+  border-collapse: collapse;
+  
+  th, td {
+    padding: 1rem 1.5rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  
+  th {
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  
+  tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+  }
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: 'Courier New', monospace;
+}
+
+.growth {
+  font-weight: 700;
+  &.positive { color: var(--growth-up); }
+  &.negative { color: var(--growth-down); }
+  &.neutral  { color: var(--text-secondary); }
+}

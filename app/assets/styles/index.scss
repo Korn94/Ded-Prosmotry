@@ -1,0 +1,23 @@
+// app/assets/styles/index.scss
+// Точка входа. Импортирует глобальные сбросы и базовые стили
+
+@use 'crm-theme';
+
+body {
+  background-color: var(--bg-dark);
+  color: var(--text);
+  font-family: var(--font);
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+  &:hover { text-decoration: underline; }
+}

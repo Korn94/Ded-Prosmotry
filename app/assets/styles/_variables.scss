@@ -1,0 +1,42 @@
+// app/assets/styles/_variables.scss
+// Глобальные CSS-переменные для тёмной темы
+:root {
+  // Фоны
+  --bg-dark: #121212;
+  --bg-lighter: #1e1e1e;
+  --bg-card: #252525;
+  --bg-input: #2a2a2a;
+  
+  // Текст
+  --text: #e0e0e0;
+  --text-secondary: #aaaaaa;
+  
+  // Границы
+  --border: #333;
+  
+  // Цвета кнопок и акцентов
+  --green: #4caf50;
+  --blue: #2196f3;
+  --purple: #9c27b0;
+  --red: #f44336;
+  --gray: #757575;
+  
+  // Индикаторы роста
+  --growth-up: #4caf50;
+  --growth-down: #f44336;
+  --growth-neutral: #ff9800;
+  
+  // Ссылки
+  --link: #64b5f6;
+  
+  // Скругления
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  
+  // Тени
+  --shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  
+  // Шрифт
+  --font: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
