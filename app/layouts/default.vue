@@ -18,6 +18,11 @@
           <span>Сообщества</span>
         </NuxtLink>
 
+        <NuxtLink to="/parse-views" class="nav-item" active-class="active">
+          <Icon name="lucide:eye" size="18" />
+          <span>Просмотры по ссылкам</span>
+        </NuxtLink>
+
         <div class="nav-divider"></div>
 
         <NuxtLink to="/add-videos" class="nav-item" active-class="active">
