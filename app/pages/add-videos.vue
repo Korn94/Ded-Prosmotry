@@ -64,9 +64,10 @@
             <td>{{ result.communityName || 'Без сообщества' }}</td>
             <td class="num">{{ formatNumber(result.views) }}</td>
             <td>
-              <span class="status-badge" :class="result.status">
-                {{ getStatusText(result.status) }}
+              <span class="status-badge" :class="[result.status, result.errorType === 'network' ? 'network' : '']">
+                {{ getStatusText(result.status, result.errorType) }}
               </span>
+              <div v-if="result.error" class="error-text">{{ result.error }}</div>
             </td>
           </tr>
         </tbody>
@@ -76,6 +77,7 @@
     <ProgressOverlay
       v-if="isProcessing"
       label="Добавление видео"
+      :hint="progressHint"
       :current="progressCurrent"
       :total="progressTotal"
     />
@@ -84,7 +86,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { readStreamProgress } from '~/composables/useStreamProgress'
+import { readStreamProgress, getStreamHint } from '~/composables/useStreamProgress'
 import { formatNumber } from '~/composables/useFormat'
 
 interface AddResult {
@@ -95,6 +97,7 @@ interface AddResult {
   views?: number
   status: 'added' | 'updated' | 'error'
   error?: string
+  errorType?: 'network' | 'parse'
 }
 
 const linksInput = ref('')
@@ -102,16 +105,17 @@ const isProcessing = ref(false)
 const results = ref<AddResult[]>([])
 const progressCurrent = ref(0)
 const progressTotal = ref(0)
+const progressHint = ref('')
 
 const addedCount = computed(() => results.value.filter(r => r.status === 'added').length)
 const updatedCount = computed(() => results.value.filter(r => r.status === 'updated').length)
 const errorsCount = computed(() => results.value.filter(r => r.status === 'error').length)
 
-function getStatusText(status: string): string {
+function getStatusText(status: string, errorType?: string): string {
   switch (status) {
     case 'added': return '✅ Добавлено'
     case 'updated': return '🔄 Обновлено'
-    case 'error': return '❌ Ошибка'
+    case 'error': return errorType === 'network' ? '🌐 Сеть/таймаут' : '❌ Ошибка'
     default: return status
   }
 }
@@ -126,6 +130,11 @@ async function handleAddVideos() {
 
   try {
     await readStreamProgress('/api/videos', (event) => {
+      // Подсказка «что сейчас происходит» (start/ping) или пусто для остальных событий
+      progressHint.value = getStreamHint(event)
+      // total известен уже на событии start — оверлей покажется сразу, а не после первого видео
+      if (event.type === 'start' && event.total) progressTotal.value = event.total
+
       if (event.type === 'progress') {
         progressCurrent.value = event.current || 0
         progressTotal.value = event.total || 0
@@ -137,7 +146,8 @@ async function handleAddVideos() {
           communityName: event.communityName,
           views: event.views,
           status: event.status as any,
-          error: event.error
+          error: event.error,
+          errorType: event.errorType
         })
       } else if (event.type === 'done') {
         console.log('[AddVideos] Завершено:', event)
@@ -262,6 +272,12 @@ async function handleAddVideos() {
     color: var(--red);
   }
 
+  .error-text {
+    font-size: 0.8rem;
+    color: var(--red);
+    margin-top: 0.25rem;
+  }
+
   .status-badge {
     display: inline-block;
     padding: 0.25rem 0.75rem;
@@ -282,6 +298,12 @@ async function handleAddVideos() {
     &.error {
       background: rgba(244, 67, 54, 0.2);
       color: var(--red);
+    }
+
+    // Сетевая ошибка (таймаут/обрыв) — не вина видео, а проблемы соединения
+    &.network {
+      background: rgba(255, 152, 0, 0.2);
+      color: var(--growth-neutral);
     }
   }
 }

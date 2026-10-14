@@ -6,6 +6,7 @@ import { inArray, eq } from 'drizzle-orm'
 import { createPass, finishPass } from '../services/passService'
 import { recordMeasurement } from '../services/measurementService'
 import { parseVideoPage } from '../utils/okRuParser'
+import { createNdjsonStream } from '../utils/ndjsonStream'
 import { z } from 'zod'
 
 const UpdateStatsSchema = z.object({
@@ -47,6 +48,7 @@ export default defineEventHandler(async (event) => {
   // 3. Запускаем NDJSON стрим
   const stream = new ReadableStream({
     async start(controller) {
+      const ndjson = createNdjsonStream(controller)
       let processed = 0
       let successCount = 0
       let errorCount = 0
@@ -56,20 +58,23 @@ export default defineEventHandler(async (event) => {
       for (const video of targetVideos) {
         processed++
         
+        // Сообщаем фронту, что элемент взят в работу, и запускаем heartbeat
+        ndjson.beginItem({ current: processed, total, videoId: video.id })
+
         // Парсим страницу
         const parsedData = await parseVideoPage(video.url, video.id)
 
         if (parsedData.error || parsedData.views === -1) {
           errorCount++
-          const msg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total,
             videoId: video.id,
             status: 'error',
-            error: parsedData.error || 'Не удалось получить просмотры'
+            error: parsedData.error || 'Не удалось получить просмотры',
+            errorType: parsedData.errorType
           })
-          controller.enqueue(new TextEncoder().encode(msg + '\n'))
         } else {
           // Обновляем title, если он пустой в БД, но есть на странице
           if (!video.title && parsedData.title) {
@@ -87,7 +92,7 @@ export default defineEventHandler(async (event) => {
           await recordMeasurement(passId, video.id, parsedData.views, null)
           
           successCount++
-          const msg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total,
@@ -96,8 +101,10 @@ export default defineEventHandler(async (event) => {
             status: 'updated',
             views: parsedData.views
           })
-          controller.enqueue(new TextEncoder().encode(msg + '\n'))
         }
+
+        // Элемент обработан — останавливаем heartbeat
+        ndjson.endItem()
 
         // Антифрод задержка
         await new Promise(r => setTimeout(r, 1500 + Math.random() * 500))
@@ -106,7 +113,7 @@ export default defineEventHandler(async (event) => {
       // 4. Завершаем обход
       await finishPass(passId, successCount, errorCount)
 
-      const doneMsg = JSON.stringify({
+      ndjson.finish({
         type: 'done',
         passId,
         updated: successCount,
@@ -114,8 +121,6 @@ export default defineEventHandler(async (event) => {
         titlesUpdated, // Добавляем статистику по названиям в финальный ответ
         total
       })
-      controller.enqueue(new TextEncoder().encode(doneMsg + '\n'))
-      controller.close()
     }
   })
 

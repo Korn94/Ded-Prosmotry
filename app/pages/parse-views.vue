@@ -66,8 +66,8 @@
             <td>{{ result.communityName || 'Без сообщества' }}</td>
             <td class="num">{{ formatNumber(result.views) }}</td>
             <td>
-              <span class="status-badge" :class="result.status">
-                {{ getStatusText(result.status) }}
+              <span class="status-badge" :class="[result.status, result.errorType === 'network' ? 'network' : '']">
+                {{ getStatusText(result.status, result.errorType) }}
               </span>
               <div v-if="result.error" class="error-text">{{ result.error }}</div>
             </td>
@@ -79,6 +79,7 @@
     <ProgressOverlay
       v-if="isProcessing"
       label="Парсинг просмотров"
+      :hint="progressHint"
       :current="progressCurrent"
       :total="progressTotal"
     />
@@ -87,7 +88,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { readStreamProgress } from '~/composables/useStreamProgress'
+import { readStreamProgress, getStreamHint } from '~/composables/useStreamProgress'
 import { formatNumber } from '~/composables/useFormat'
 
 interface ParseResult {
@@ -98,6 +99,7 @@ interface ParseResult {
   views?: number
   status: 'ok' | 'error'
   error?: string
+  errorType?: 'network' | 'parse'
 }
 
 const linksInput = ref('')
@@ -106,14 +108,15 @@ const results = ref<ParseResult[]>([])
 const progressCurrent = ref(0)
 const progressTotal = ref(0)
 const totalViews = ref(0)
+const progressHint = ref('')
 
 const okCount = computed(() => results.value.filter(r => r.status === 'ok').length)
 const errorsCount = computed(() => results.value.filter(r => r.status === 'error').length)
 
-function getStatusText(status: string): string {
+function getStatusText(status: string, errorType?: string): string {
   switch (status) {
     case 'ok': return '✅ Получено'
-    case 'error': return '❌ Ошибка'
+    case 'error': return errorType === 'network' ? '🌐 Сеть/таймаут' : '❌ Ошибка'
     default: return status
   }
 }
@@ -129,6 +132,11 @@ async function handleParseViews() {
 
   try {
     await readStreamProgress('/api/parse-views', (event) => {
+      // Подсказка «что сейчас происходит» (start/ping) или пусто для остальных событий
+      progressHint.value = getStreamHint(event)
+      // total известен уже на событии start — оверлей покажется сразу, а не после первого видео
+      if (event.type === 'start' && event.total) progressTotal.value = event.total
+
       if (event.type === 'progress') {
         progressCurrent.value = event.current || 0
         progressTotal.value = event.total || 0
@@ -140,7 +148,8 @@ async function handleParseViews() {
           communityName: event.communityName,
           views: event.views,
           status: (event.status === 'ok' ? 'ok' : 'error'),
-          error: event.error
+          error: event.error,
+          errorType: event.errorType
         })
       } else if (event.type === 'done') {
         totalViews.value = (event as any).totalViews || 0
@@ -287,6 +296,12 @@ async function handleParseViews() {
     &.error {
       background: rgba(244, 67, 54, 0.2);
       color: var(--red);
+    }
+
+    // Сетевая ошибка (таймаут/обрыв) — не вина видео, а проблемы соединения
+    &.network {
+      background: rgba(255, 152, 0, 0.2);
+      color: var(--growth-neutral);
     }
   }
 }

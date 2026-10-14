@@ -124,6 +124,7 @@
     <ProgressOverlay
       v-if="isUpdating"
       label="Обновление всех видео"
+      :hint="progressHint"
       :current="progressCurrent"
       :total="progressTotal"
     />
@@ -133,7 +134,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { formatNumber, formatDate } from '~/composables/useFormat'
-import { readStreamProgress } from '~/composables/useStreamProgress'
+import { readStreamProgress, getStreamHint } from '~/composables/useStreamProgress'
 import DailyActivityChart from '~/components/charts/DailyActivityChart.vue'
 import WeeklyTrendChart from '~/components/charts/WeeklyTrendChart.vue'
 import WeeklyGrowthChart from '~/components/charts/WeeklyGrowthChart.vue'
@@ -168,6 +169,7 @@ const sortDir = ref<'asc' | 'desc'>('desc')
 const isUpdating = ref(false)
 const progressCurrent = ref(0)
 const progressTotal = ref(0)
+const progressHint = ref('')
 
 function currentGrowth(video: VideoStat): number {
   if (selectedPeriod.value === 7) return video.growth7
@@ -263,6 +265,11 @@ async function handleUpdateAll() {
 
   try {
     await readStreamProgress('/api/update-stats', (event) => {
+      // Подсказка «что сейчас происходит» (start/ping) или пусто для остальных событий
+      progressHint.value = getStreamHint(event)
+      // total известен уже на событии start — оверлей покажется сразу, а не после первого видео
+      if (event.type === 'start' && event.total) progressTotal.value = event.total
+
       if (event.type === 'progress') {
         progressCurrent.value = event.current || 0
         progressTotal.value = event.total || 0

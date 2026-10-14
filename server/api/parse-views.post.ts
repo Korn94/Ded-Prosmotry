@@ -2,6 +2,7 @@
 // Парсинг просмотров по ссылкам БЕЗ записи в локальную БД
 import { defineEventHandler, readBody, createError } from 'h3'
 import { parseVideoPage } from '../utils/okRuParser'
+import { createNdjsonStream } from '../utils/ndjsonStream'
 import { z } from 'zod'
 
 const ParseViewsSchema = z.object({
@@ -38,6 +39,7 @@ export default defineEventHandler(async (event) => {
   // Создаем NDJSON стрим (только чтение, без обращений к БД)
   const stream = new ReadableStream({
     async start(controller) {
+      const ndjson = createNdjsonStream(controller)
       let ok = 0
       let errors = 0
       let processed = 0
@@ -49,7 +51,7 @@ export default defineEventHandler(async (event) => {
         // Извлекаем videoId
         const match = link.trim().match(/ok\.ru\/video\/(\d+)/i)
         if (!match) {
-          const errorMsg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total: linkList.length,
@@ -57,13 +59,15 @@ export default defineEventHandler(async (event) => {
             status: 'error',
             error: 'Неверный формат ссылки (ожидается ok.ru/video/ID)'
           })
-          controller.enqueue(new TextEncoder().encode(errorMsg + '\n'))
           errors++
           continue
         }
 
         const videoId = match[1]!
         const url = `https://ok.ru/video/${videoId}`
+
+        // Сообщаем фронту, что элемент взят в работу, и запускаем heartbeat
+        ndjson.beginItem({ current: processed, total: linkList.length, videoId, link })
 
         try {
           // Только парсим страницу — ничего не сохраняем
@@ -75,7 +79,7 @@ export default defineEventHandler(async (event) => {
             ok++
           }
 
-          const progressMsg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total: linkList.length,
@@ -85,13 +89,13 @@ export default defineEventHandler(async (event) => {
             communityName: result.community?.name ?? null,
             views: hasViews ? result.views : -1,
             status: hasViews ? 'ok' : 'error',
-            error: result.error || (hasViews ? undefined : 'Не удалось определить количество просмотров')
+            error: result.error || (hasViews ? undefined : 'Не удалось определить количество просмотров'),
+            errorType: result.errorType
           })
-          controller.enqueue(new TextEncoder().encode(progressMsg + '\n'))
 
           if (!hasViews) errors++
         } catch (err) {
-          const errorMsg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total: linkList.length,
@@ -99,23 +103,22 @@ export default defineEventHandler(async (event) => {
             status: 'error',
             error: (err as Error).message
           })
-          controller.enqueue(new TextEncoder().encode(errorMsg + '\n'))
           errors++
+        } finally {
+          ndjson.endItem()
         }
 
         // Задержка между запросами (антифрод)
         await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500))
       }
 
-      const doneMsg = JSON.stringify({
+      ndjson.finish({
         type: 'done',
         ok,
         errors,
         total: linkList.length,
         totalViews
       })
-      controller.enqueue(new TextEncoder().encode(doneMsg + '\n'))
-      controller.close()
     }
   })
 

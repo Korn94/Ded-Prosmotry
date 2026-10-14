@@ -132,6 +132,7 @@
     <ProgressOverlay
       v-if="isUpdating"
       label="Обновление видео"
+      :hint="progressHint"
       :current="progressCurrent"
       :total="progressTotal"
     />
@@ -142,7 +143,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { formatNumber, formatDate, formatDateTime, getGrowthClass } from '~/composables/useFormat'
-import { readStreamProgress } from '~/composables/useStreamProgress'
+import { readStreamProgress, getStreamHint } from '~/composables/useStreamProgress'
 import LineChart from '~/components/charts/LineChart.vue'
 
 interface Measurement {
@@ -180,6 +181,7 @@ const error = ref<string | null>(null)
 const isUpdating = ref(false)
 const progressCurrent = ref(0)
 const progressTotal = ref(0)
+const progressHint = ref('')
 
 // Определяем ссылку "Назад" на основе того, откуда пришли
 const backLink = computed(() => {
@@ -224,6 +226,11 @@ async function handleUpdate() {
 
   try {
     await readStreamProgress('/api/update-stats', (event) => {
+      // Подсказка «что сейчас происходит» (start/ping) или пусто для остальных событий
+      progressHint.value = getStreamHint(event)
+      // total известен уже на событии start — оверлей покажется сразу, а не после первого видео
+      if (event.type === 'start' && event.total) progressTotal.value = event.total
+
       if (event.type === 'progress') {
         progressCurrent.value = event.current || 0
         progressTotal.value = event.total || 0

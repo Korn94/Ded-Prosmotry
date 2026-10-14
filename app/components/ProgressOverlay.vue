@@ -17,6 +17,8 @@
         <p class="progress-sub">
           Обработано: {{ current }} из {{ total }}
         </p>
+
+        <p class="progress-hint">{{ hint }}</p>
       </div>
     </div>
   </Teleport>
@@ -29,6 +31,8 @@ const props = defineProps<{
   label: string
   current: number
   total: number
+  /** Подсказка, что сейчас происходит («Обрабатывается 3 из 10…», «Ожидание ответа…») */
+  hint?: string
 }>()
 
 const percent = computed(() => {
@@ -99,5 +103,18 @@ const percent = computed(() => {
   font-size: 0.85rem;
   color: var(--text-secondary);
   margin: 0;
+}
+
+.progress-hint {
+  font-size: 0.85rem;
+  color: var(--growth-neutral);
+  margin: 0.5rem 0 0 0;
+  min-height: 1.2em; // место под подсказку, чтобы карточка не «прыгала»
+  animation: hint-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes hint-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 </style>

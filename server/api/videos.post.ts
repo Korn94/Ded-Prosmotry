@@ -1,6 +1,7 @@
 // server/api/videos.post.ts
 import { defineEventHandler, readBody, createError } from 'h3'
 import { addVideoByUrl } from '../services/videoService'
+import { createNdjsonStream } from '../utils/ndjsonStream'
 import { z } from 'zod'
 
 const AddVideosSchema = z.object({
@@ -38,6 +39,7 @@ export default defineEventHandler(async (event) => {
   // Создаем NDJSON стрим
   const stream = new ReadableStream({
     async start(controller) {
+      const ndjson = createNdjsonStream(controller)
       let added = 0
       let updated = 0
       let errors = 0
@@ -49,7 +51,7 @@ export default defineEventHandler(async (event) => {
         // Извлекаем videoId
         const match = link.trim().match(/ok\.ru\/video\/(\d+)/i)
         if (!match) {
-          const errorMsg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total: linkList.length,
@@ -57,7 +59,6 @@ export default defineEventHandler(async (event) => {
             status: 'error',
             error: 'Неверный формат ссылки (ожидается ok.ru/video/ID)'
           })
-          controller.enqueue(new TextEncoder().encode(errorMsg + '\n'))
           errors++
           continue
         }
@@ -65,10 +66,13 @@ export default defineEventHandler(async (event) => {
         const videoId = match[1]!
         const url = `https://ok.ru/video/${videoId}`
 
+        // Сообщаем фронту, что элемент взят в работу, и запускаем heartbeat
+        ndjson.beginItem({ current: processed, total: linkList.length, videoId, link })
+
         try {
           const result = await addVideoByUrl(url, videoId)
 
-          const progressMsg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total: linkList.length,
@@ -76,16 +80,17 @@ export default defineEventHandler(async (event) => {
             title: result.title,
             communityName: result.communityName,
             views: result.views,
-            status: result.isNew ? 'added' : 'updated',
-            error: result.error
+            // Ошибка парсера (сеть/таймаут и т.п.) важнее статуса added/updated
+            status: result.error ? 'error' : (result.isNew ? 'added' : 'updated'),
+            error: result.error,
+            errorType: result.errorType
           })
-          controller.enqueue(new TextEncoder().encode(progressMsg + '\n'))
 
-          if (result.isNew) added++
-          else updated++
           if (result.error) errors++
+          else if (result.isNew) added++
+          else updated++
         } catch (err) {
-          const errorMsg = JSON.stringify({
+          ndjson.send({
             type: 'progress',
             current: processed,
             total: linkList.length,
@@ -93,23 +98,22 @@ export default defineEventHandler(async (event) => {
             status: 'error',
             error: (err as Error).message
           })
-          controller.enqueue(new TextEncoder().encode(errorMsg + '\n'))
           errors++
+        } finally {
+          ndjson.endItem()
         }
 
         // Задержка между запросами (антифрод)
         await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500))
       }
 
-      const doneMsg = JSON.stringify({
+      ndjson.finish({
         type: 'done',
         added,
         updated,
         errors,
         total: linkList.length
       })
-      controller.enqueue(new TextEncoder().encode(doneMsg + '\n'))
-      controller.close()
     }
   })
 

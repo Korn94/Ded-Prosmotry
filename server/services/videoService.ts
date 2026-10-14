@@ -15,6 +15,8 @@ export interface AddVideoResult {
   communityName: string | null
   isNew: boolean
   error?: string
+  /** Тип ошибки парсера: проблема с сетью или с парсингом страницы */
+  errorType?: 'network' | 'parse'
 }
 
 /**
@@ -57,7 +59,8 @@ export async function addVideoByUrl(url: string, videoId: string): Promise<AddVi
       communityId: null,
       communityName: null,
       isNew: false,
-      error: parsed.error
+      error: parsed.error,
+      errorType: parsed.errorType
     }
   }
 

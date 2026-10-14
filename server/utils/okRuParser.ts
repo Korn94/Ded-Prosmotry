@@ -10,8 +10,11 @@ const BROWSER_HEADERS = {
   'Upgrade-Insecure-Requests': '1',
 }
 
-const REQUEST_TIMEOUT_MS = 10000
-const MAX_RETRIES = 2
+// Таймаут с запасом: на медленном VPN страница OK.RU может грузиться дольше обычного
+const REQUEST_TIMEOUT_MS = 15000
+// Больше попыток + экспоненциальная пауза — переживаем просадки связи
+const MAX_RETRIES = 3
+const RETRY_DELAY_MS = 2000
 
 export interface ParsedVideoData {
   videoId: string
@@ -19,6 +22,13 @@ export interface ParsedVideoData {
   views: number // -1 = ошибка
   community: ParsedCommunityData | null
   error?: string
+  /**
+   * Тип ошибки, чтобы UI отличал проблему с сетью от проблемы парсинга:
+   * - network: таймаут/обрыв связи/5xx (сеть не виновата в данных — стоит повторить позже)
+   * - parse: страница загрузилась, но просмотры не найдены
+   * - undefined: прочие ошибки (например, 404 — видео недоступно)
+   */
+  errorType?: 'network' | 'parse'
 }
 
 export interface ParsedCommunityData {
@@ -29,6 +39,68 @@ export interface ParsedCommunityData {
 }
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+/**
+ * Определяет, стоит ли повторять запрос после ошибки.
+ * Повторяем только сетевые проблемы: таймаут, обрыв соединения, DNS, 5xx.
+ * Ответы вида «видео не найдено» (4xx) не ретраим — повтор ничего не даст.
+ */
+function isRetryableError(err: unknown): boolean {
+  const e = err as {
+    message?: string
+    name?: string
+    statusCode?: number
+    status?: number
+    code?: string
+    cause?: { code?: string, cause?: { code?: string } }
+  }
+
+  const haystack = [
+    e?.message,
+    e?.name,
+    e?.code,
+    e?.cause?.code,
+    e?.cause?.cause?.code
+  ].filter(Boolean).join(' ')
+
+  // Таймаут ($fetch/ofetch шлёт TimeoutError) и известные сетевые коды
+  if (/timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|ECONNABORTED|ENETUNREACH|EHOSTUNREACH|UND_ERR|fetch failed|socket hang up|aborted/i.test(haystack)) {
+    return true
+  }
+
+  const status = e?.statusCode ?? e?.status
+  return typeof status === 'number' && status >= 500
+}
+
+/**
+ * Загружает страницу с ретраями ТОЛЬКО на сетевые ошибки.
+ * Пауза между попытками растёт экспоненциально: 2с → 4с → 8с.
+ */
+async function fetchHtmlWithRetry(url: string): Promise<string> {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await $fetch<string>(url, {
+        headers: BROWSER_HEADERS,
+        responseType: 'text',
+        timeout: REQUEST_TIMEOUT_MS
+      })
+    } catch (err) {
+      lastError = err
+      const retryable = isRetryableError(err)
+      console.error(`[Парсер] Запрос ${url}: ошибка попытки ${attempt}/${MAX_RETRIES}:`, (err as Error).message)
+
+      if (!retryable || attempt >= MAX_RETRIES) break
+
+      const waitMs = RETRY_DELAY_MS * 2 ** (attempt - 1)
+      console.log(`[Парсер] Запрос ${url}: повтор через ${waitMs} мс (медленная сеть?)`)
+      await delay(waitMs)
+    }
+  }
+
+  throw lastError ?? new Error('Неизвестная ошибка запроса')
+}
 
 /**
  * Декодирует HTML entities в строке (&quot; → ", &amp; → & и т.д.)
@@ -294,49 +366,51 @@ function parseCommunity($: ReturnType<typeof load>, html: string): ParsedCommuni
  * Парсит страницу видео и извлекает все данные
  */
 export async function parseVideoPage(videoUrl: string, videoId: string): Promise<ParsedVideoData> {
-  let lastError: string | undefined
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      console.log(`[Парсер] Запрос к видео ${videoId} (попытка ${attempt}/${MAX_RETRIES})`)
-
-      const html = await $fetch<string>(videoUrl, {
-        headers: BROWSER_HEADERS,
-        responseType: 'text',
-        timeout: REQUEST_TIMEOUT_MS
-      })
-
-      const $ = load(html)
-      const titleElement = $('h1.vp-layer-info_h.textWrap')
-      const title = titleElement.text().trim() || null
-      const views = parseViews($)
-      const community = parseCommunity($, html)
-
-      if (views === -1) {
-        console.warn(`[Парсер] Видео ${videoId}: не удалось найти просмотры`)
-      }
-
-      if (community) {
-        console.log(`[Парсер] Видео ${videoId}: определено сообщество "${community.name}" (${community.okGroupId})`)
-      }
-
-      return { videoId, title, views, community }
-    } catch (err) {
-      lastError = (err as Error).message
-      console.error(`[Парсер] Видео ${videoId}: ошибка попытки ${attempt}:`, lastError)
-
-      if (attempt < MAX_RETRIES) {
-        await delay(2000)
-      }
+  // 1. Загрузка страницы (с ретраями на сетевые ошибки — внутри fetchHtmlWithRetry)
+  let html: string
+  try {
+    html = await fetchHtmlWithRetry(videoUrl)
+  } catch (err) {
+    const message = (err as Error).message
+    console.error(`[Парсер] Видео ${videoId}: не удалось загрузить страницу:`, message)
+    return {
+      videoId,
+      title: null,
+      views: -1,
+      community: null,
+      error: message || 'Неизвестная ошибка',
+      // 'network' только если причина — сеть/таймаут (404 и прочие ответы — обычная ошибка)
+      errorType: isRetryableError(err) ? 'network' : undefined
     }
   }
 
-  return {
-    videoId,
-    title: null,
-    views: -1,
-    community: null,
-    error: lastError || 'Неизвестная ошибка'
+  // 2. Разбор. Страница уже загружена, поэтому ошибки здесь НЕ связаны с сетью
+  try {
+    const $ = load(html)
+    const titleElement = $('h1.vp-layer-info_h.textWrap')
+    const title = titleElement.text().trim() || null
+    const views = parseViews($)
+    const community = parseCommunity($, html)
+
+    if (views === -1) {
+      console.warn(`[Парсер] Видео ${videoId}: не удалось найти просмотры`)
+    }
+
+    if (community) {
+      console.log(`[Парсер] Видео ${videoId}: определено сообщество "${community.name}" (${community.okGroupId})`)
+    }
+
+    return { videoId, title, views, community, errorType: views === -1 ? 'parse' : undefined }
+  } catch (err) {
+    console.error(`[Парсер] Видео ${videoId}: ошибка разбора страницы:`, (err as Error).message)
+    return {
+      videoId,
+      title: null,
+      views: -1,
+      community: null,
+      error: (err as Error).message,
+      errorType: 'parse'
+    }
   }
 }
 
@@ -347,11 +421,8 @@ export async function parseCommunityPage(communityUrl: string): Promise<ParsedCo
   try {
     console.log(`[Парсер] Запрос к сообществу: ${communityUrl}`)
 
-    const html = await $fetch<string>(communityUrl, {
-      headers: BROWSER_HEADERS,
-      responseType: 'text',
-      timeout: REQUEST_TIMEOUT_MS
-    })
+    // Ретраи на сетевые ошибки — внутри fetchHtmlWithRetry
+    const html = await fetchHtmlWithRetry(communityUrl)
 
     const $ = load(html)
 
